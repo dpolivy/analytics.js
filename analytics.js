@@ -230,7 +230,6 @@ module.exports = defaults;
 
 });
 require.register("component-type/index.js", function(exports, require, module){
-
 /**
  * toString ref.
  */
@@ -247,20 +246,19 @@ var toString = Object.prototype.toString;
 
 module.exports = function(val){
   switch (toString.call(val)) {
-    case '[object Function]': return 'function';
     case '[object Date]': return 'date';
     case '[object RegExp]': return 'regexp';
     case '[object Arguments]': return 'arguments';
     case '[object Array]': return 'array';
-    case '[object String]': return 'string';
+    case '[object Error]': return 'error';
   }
 
   if (val === null) return 'null';
   if (val === undefined) return 'undefined';
+  if (val !== val) return 'nan';
   if (val && val.nodeType === 1) return 'element';
-  if (val === Object(val)) return 'object';
 
-  return typeof val;
+  return typeof val.valueOf();
 };
 
 });
@@ -1191,8 +1189,13 @@ function isEmpty (val) {
 });
 require.register("ianstormtaylor-is/index.js", function(exports, require, module){
 
-var isEmpty = require('is-empty')
-  , typeOf = require('type');
+var isEmpty = require('is-empty');
+
+try {
+  var typeOf = require('type');
+} catch (e) {
+  var typeOf = require('component-type');
+}
 
 
 /**
@@ -11392,34 +11395,6 @@ module.exports = function extend (object) {
     return object;
 };
 });
-require.register("camshaft-require-component/index.js", function(exports, require, module){
-/**
- * Require a module with a fallback
- */
-module.exports = function(parent) {
-  function require(name, fallback) {
-    try {
-      return parent(name);
-    }
-    catch (e) {
-      try {
-        return parent(fallback || name+"-component");
-      }
-      catch(e2) {
-        throw e;
-      }
-    }
-  };
-
-  // Merge the old properties
-  for (var key in parent) {
-    require[key] = parent[key];
-  }
-
-  return require;
-};
-
-});
 require.register("segmentio-facade/lib/index.js", function(exports, require, module){
 
 var Facade = require('./facade');
@@ -11439,13 +11414,17 @@ Facade.Group = require('./group');
 Facade.Identify = require('./identify');
 Facade.Track = require('./track');
 Facade.Page = require('./page');
+Facade.Screen = require('./screen');
 
 });
 require.register("segmentio-facade/lib/alias.js", function(exports, require, module){
 
+/**
+ * Module dependencies.
+ */
+
 var Facade = require('./facade');
-var component = require('require-component')(require);
-var inherit = component('inherit');
+var inherit = require('inherit');
 
 /**
  * Expose `Alias` facade.
@@ -11478,23 +11457,44 @@ inherit(Alias, Facade);
  * @return {String}
  */
 
+Alias.prototype.type =
 Alias.prototype.action = function () {
   return 'alias';
 };
 
 /**
- * Setup some basic proxies.
+ * Get `previousId`.
+ *
+ * @return {Mixed}
+ * @api public
  */
 
-Alias.prototype.from = Facade.field('from');
-Alias.prototype.to = Facade.field('to');
+Alias.prototype.from =
+Alias.prototype.previousId = function(){
+  return this.field('previousId')
+    || this.field('from');
+};
+
+/**
+ * Get `userId`.
+ *
+ * @return {String}
+ * @api public
+ */
+
+Alias.prototype.to =
+Alias.prototype.userId = function(){
+  return this.field('userId')
+    || this.field('to');
+};
+
 });
 require.register("segmentio-facade/lib/facade.js", function(exports, require, module){
 
-var component = require('require-component')(require);
-var clone = component('clone');
-var isEnabled = component('./is-enabled');
-var objCase = component('obj-case');
+var clone = require('clone');
+var isEnabled = require('./is-enabled');
+var objCase = require('obj-case');
+var traverse = require('isodate-traverse');
 
 /**
  * Expose `Facade`.
@@ -11532,10 +11532,10 @@ Facade.prototype.proxy = function (field) {
   var obj = this[field] || this.field(field);
   if (!obj) return obj;
   if (typeof obj === 'function') obj = obj.call(this) || {};
-  if (fields.length === 0) return clone(obj);
+  if (fields.length === 0) return transform(obj);
 
   obj = objCase(obj, fields.join('.'));
-  return clone(obj);
+  return transform(obj);
 };
 
 /**
@@ -11547,7 +11547,8 @@ Facade.prototype.proxy = function (field) {
  */
 
 Facade.prototype.field = function (field) {
-  return clone(this.obj[field]);
+  var obj = this.obj[field];
+  return transform(obj);
 };
 
 /**
@@ -11602,8 +11603,10 @@ Facade.prototype.options = function (integration) {
   var options = clone(this.obj.options || this.obj.context) || {};
   if (!integration) return clone(options);
   if (!this.enabled(integration)) return;
-  options = options[integration] || objCase(options, integration) || {};
-  return typeof options === 'boolean' ? {} : clone(options);
+  var integrations = this.integrations();
+  var value = integrations[integration] || objCase(integrations, integration);
+  if ('boolean' == typeof value) value = {};
+  return value || {};
 };
 
 /**
@@ -11642,12 +11645,18 @@ Facade.prototype.enabled = function (integration) {
 };
 
 /**
- * Get the `userAgent` option.
+ * Get all `integration` options.
  *
- * @return {String}
+ * @param {String} integration
+ * @return {Object}
+ * @api private
  */
 
-Facade.prototype.userAgent = function () {};
+Facade.prototype.integrations = function(){
+  return this.obj.integrations
+    || this.proxy('options.providers')
+    || this.options();
+};
 
 /**
  * Check whether the user is active.
@@ -11662,22 +11671,47 @@ Facade.prototype.active = function () {
 };
 
 /**
+ * Get `sessionId / anonymousId`.
+ *
+ * @return {Mixed}
+ * @api public
+ */
+
+Facade.prototype.sessionId =
+Facade.prototype.anonymousId = function(){
+  return this.field('anonymousId')
+    || this.field('sessionId');
+};
+
+/**
  * Setup some basic proxies.
  */
 
 Facade.prototype.userId = Facade.field('userId');
-Facade.prototype.sessionId = Facade.field('sessionId');
 Facade.prototype.channel = Facade.field('channel');
 Facade.prototype.timestamp = Facade.field('timestamp');
+Facade.prototype.userAgent = Facade.proxy('options.userAgent');
 Facade.prototype.ip = Facade.proxy('options.ip');
+
+/**
+ * Return the cloned and traversed object
+ *
+ * @param {Mixed} obj
+ * @return {Mixed}
+ */
+
+function transform(obj){
+  var cloned = clone(obj);
+  traverse(cloned);
+  return cloned;
+}
 
 });
 require.register("segmentio-facade/lib/group.js", function(exports, require, module){
 
 var Facade = require('./facade');
-var component = require('require-component')(require);
-var inherit = component('inherit');
-var newDate = component('new-date');
+var inherit = require('inherit');
+var newDate = require('new-date');
 
 /**
  * Expose `Group` facade.
@@ -11709,6 +11743,7 @@ inherit(Group, Facade);
  * Get the facade's action.
  */
 
+Group.prototype.type =
 Group.prototype.action = function () {
   return 'group';
 };
@@ -11777,9 +11812,8 @@ Group.prototype.properties = function(){
 });
 require.register("segmentio-facade/lib/page.js", function(exports, require, module){
 
-var component = require('require-component')(require);
-var Facade = component('./facade');
-var inherit = component('inherit');
+var Facade = require('./facade');
+var inherit = require('inherit');
 var Track = require('./track');
 
 /**
@@ -11814,6 +11848,7 @@ inherit(Page, Facade);
  * @return {String}
  */
 
+Page.prototype.type =
 Page.prototype.action = function(){
   return 'page';
 };
@@ -11884,13 +11919,12 @@ Page.prototype.track = function(name){
 });
 require.register("segmentio-facade/lib/identify.js", function(exports, require, module){
 
-var component = require('require-component')(require);
-var clone = component('clone');
-var Facade = component('./facade');
-var inherit = component('inherit');
-var isEmail = component('is-email');
-var newDate = component('new-date');
-var trim = component('trim');
+var clone = require('clone');
+var Facade = require('./facade');
+var inherit = require('inherit');
+var isEmail = require('is-email');
+var newDate = require('new-date');
+var trim = require('trim');
 
 /**
  * Expose `Idenfity` facade.
@@ -11922,6 +11956,7 @@ inherit(Identify, Facade);
  * Get the facade's action.
  */
 
+Identify.prototype.type =
 Identify.prototype.action = function () {
   return 'identify';
 };
@@ -12101,13 +12136,11 @@ module.exports = function (integration) {
 });
 require.register("segmentio-facade/lib/track.js", function(exports, require, module){
 
-var component = require('require-component')(require);
-var clone = component('clone');
-var Facade = component('./facade');
-var Identify = component('./identify');
-var inherit = component('inherit');
-var isEmail = component('is-email');
-var traverse = component('isodate-traverse');
+var clone = require('clone');
+var Facade = require('./facade');
+var Identify = require('./identify');
+var inherit = require('inherit');
+var isEmail = require('is-email');
 
 /**
  * Expose `Track` facade.
@@ -12142,6 +12175,7 @@ inherit(Track, Facade);
  * @return {String}
  */
 
+Track.prototype.type =
 Track.prototype.action = function () {
   return 'track';
 };
@@ -12174,7 +12208,6 @@ Track.prototype.name = Facade.proxy('properties.name');
 Track.prototype.price = Facade.proxy('properties.price');
 Track.prototype.total = Facade.proxy('properties.total');
 Track.prototype.coupon = Facade.proxy('properties.coupon');
-Track.prototype.orderId = Facade.proxy('properties.orderId');
 Track.prototype.shipping = Facade.proxy('properties.shipping');
 
 /**
@@ -12268,7 +12301,7 @@ Track.prototype.properties = function (aliases) {
     delete ret[alias];
   }
 
-  return clone(traverse(ret));
+  return ret;
 };
 
 /**
@@ -12303,6 +12336,7 @@ Track.prototype.username = function () {
 
 Track.prototype.email = function () {
   var email = this.proxy('traits.email');
+  email = email || this.proxy('properties.email');
   if (email) return email;
 
   var userId = this.userId();
@@ -12355,6 +12389,81 @@ Track.prototype.identify = function () {
   var json = this.json();
   json.traits = this.traits();
   return new Identify(json);
+};
+
+});
+require.register("segmentio-facade/lib/screen.js", function(exports, require, module){
+
+var inherit = require('inherit');
+var Page = require('./page');
+var Track = require('./track');
+
+/**
+ * Expose `Screen` facade
+ */
+
+module.exports = Screen;
+
+/**
+ * Initialize new `Screen` facade with `dictionary`.
+ *
+ * @param {Object} dictionary
+ *   @param {String} category
+ *   @param {String} name
+ *   @param {Object} traits
+ *   @param {Object} options
+ */
+
+function Screen(dictionary){
+  Page.call(this, dictionary);
+}
+
+/**
+ * Inherit from `Page`
+ */
+
+inherit(Screen, Page);
+
+/**
+ * Get the facade's action.
+ *
+ * @return {String}
+ * @api public
+ */
+
+Screen.prototype.type =
+Screen.prototype.action = function(){
+  return 'screen';
+};
+
+/**
+ * Get event with `name`.
+ *
+ * @param {String} name
+ * @return {String}
+ * @api public
+ */
+
+Screen.prototype.event = function(name){
+  return name
+    ? 'Viewed ' + name + ' Screen'
+    : 'Loaded a Screen';
+};
+
+/**
+ * Convert this Screen.
+ *
+ * @param {String} name
+ * @return {Track}
+ * @api public
+ */
+
+Screen.prototype.track = function(name){
+  var props = this.properties();
+  return new Track({
+    event: this.event(name),
+    properties: props
+  });
 };
 
 });
@@ -15027,9 +15136,8 @@ require.alias("segmentio-facade/lib/page.js", "segmentio-analytics.js-integratio
 require.alias("segmentio-facade/lib/identify.js", "segmentio-analytics.js-integrations/deps/facade/lib/identify.js");
 require.alias("segmentio-facade/lib/is-enabled.js", "segmentio-analytics.js-integrations/deps/facade/lib/is-enabled.js");
 require.alias("segmentio-facade/lib/track.js", "segmentio-analytics.js-integrations/deps/facade/lib/track.js");
+require.alias("segmentio-facade/lib/screen.js", "segmentio-analytics.js-integrations/deps/facade/lib/screen.js");
 require.alias("segmentio-facade/lib/index.js", "segmentio-analytics.js-integrations/deps/facade/index.js");
-require.alias("camshaft-require-component/index.js", "segmentio-facade/deps/require-component/index.js");
-
 require.alias("segmentio-isodate-traverse/index.js", "segmentio-facade/deps/isodate-traverse/index.js");
 require.alias("component-each/index.js", "segmentio-isodate-traverse/deps/each/index.js");
 require.alias("component-type/index.js", "component-each/deps/type/index.js");
@@ -15245,10 +15353,9 @@ require.alias("segmentio-facade/lib/page.js", "analytics/deps/facade/lib/page.js
 require.alias("segmentio-facade/lib/identify.js", "analytics/deps/facade/lib/identify.js");
 require.alias("segmentio-facade/lib/is-enabled.js", "analytics/deps/facade/lib/is-enabled.js");
 require.alias("segmentio-facade/lib/track.js", "analytics/deps/facade/lib/track.js");
+require.alias("segmentio-facade/lib/screen.js", "analytics/deps/facade/lib/screen.js");
 require.alias("segmentio-facade/lib/index.js", "analytics/deps/facade/index.js");
 require.alias("segmentio-facade/lib/index.js", "facade/index.js");
-require.alias("camshaft-require-component/index.js", "segmentio-facade/deps/require-component/index.js");
-
 require.alias("segmentio-isodate-traverse/index.js", "segmentio-facade/deps/isodate-traverse/index.js");
 require.alias("component-each/index.js", "segmentio-isodate-traverse/deps/each/index.js");
 require.alias("component-type/index.js", "component-each/deps/type/index.js");

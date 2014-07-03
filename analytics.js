@@ -201,35 +201,24 @@ require.relative = function(parent) {
   return localRequire;
 };
 require.register("avetisk-defaults/index.js", function(exports, require, module){
-'use strict';
-
 /**
- * Merge default values.
- *
- * @param {Object} dest
- * @param {Object} defaults
- * @return {Object}
- * @api public
+ * Expose `defaults`.
  */
-var defaults = function (dest, src, recursive) {
-  for (var prop in src) {
-    if (recursive && dest[prop] instanceof Object && src[prop] instanceof Object) {
-      dest[prop] = defaults(dest[prop], src[prop], true);
-    } else if (! (prop in dest)) {
-      dest[prop] = src[prop];
+module.exports = defaults;
+
+function defaults (dest, defaults) {
+  for (var prop in defaults) {
+    if (! (prop in dest)) {
+      dest[prop] = defaults[prop];
     }
   }
 
   return dest;
 };
 
-/**
- * Expose `defaults`.
- */
-module.exports = defaults;
-
 });
 require.register("component-type/index.js", function(exports, require, module){
+
 /**
  * toString ref.
  */
@@ -246,21 +235,18 @@ var toString = Object.prototype.toString;
 
 module.exports = function(val){
   switch (toString.call(val)) {
+    case '[object Function]': return 'function';
     case '[object Date]': return 'date';
     case '[object RegExp]': return 'regexp';
     case '[object Arguments]': return 'arguments';
     case '[object Array]': return 'array';
-    case '[object Error]': return 'error';
+    case '[object String]': return 'string';
   }
 
   if (val === null) return 'null';
   if (val === undefined) return 'undefined';
-  if (val !== val) return 'nan';
   if (val && val.nodeType === 1) return 'element';
-
-  val = val.valueOf
-    ? val.valueOf()
-    : Object.prototype.valueOf.apply(val)
+  if (val === Object(val)) return 'object';
 
   return typeof val;
 };
@@ -937,15 +923,15 @@ exports.parse = function(url){
   a.href = url;
   return {
     href: a.href,
-    host: a.host || location.host,
-    port: ('0' === a.port || '' === a.port) ? port(a.protocol) : a.port,
+    host: a.host,
+    port: a.port,
     hash: a.hash,
-    hostname: a.hostname || location.hostname,
-    pathname: a.pathname.charAt(0) != '/' ? '/' + a.pathname : a.pathname,
-    protocol: !a.protocol || ':' == a.protocol ? location.protocol : a.protocol,
+    hostname: a.hostname,
+    pathname: a.pathname,
+    protocol: a.protocol,
     search: a.search,
     query: a.search.slice(1)
-  };
+  }
 };
 
 /**
@@ -957,7 +943,9 @@ exports.parse = function(url){
  */
 
 exports.isAbsolute = function(url){
-  return 0 == url.indexOf('//') || !!~url.indexOf('://');
+  if (0 == url.indexOf('//')) return true;
+  if (~url.indexOf('://')) return true;
+  return false;
 };
 
 /**
@@ -969,7 +957,7 @@ exports.isAbsolute = function(url){
  */
 
 exports.isRelative = function(url){
-  return !exports.isAbsolute(url);
+  return ! exports.isAbsolute(url);
 };
 
 /**
@@ -982,29 +970,10 @@ exports.isRelative = function(url){
 
 exports.isCrossDomain = function(url){
   url = exports.parse(url);
-  return url.hostname !== location.hostname
-    || url.port !== location.port
-    || url.protocol !== location.protocol;
+  return url.hostname != location.hostname
+    || url.port != location.port
+    || url.protocol != location.protocol;
 };
-
-/**
- * Return default port for `protocol`.
- *
- * @param  {String} protocol
- * @return {String}
- * @api private
- */
-function port (protocol){
-  switch (protocol) {
-    case 'http:':
-      return 80;
-    case 'https:':
-      return 443;
-    default:
-      return location.port;
-  }
-}
-
 });
 require.register("component-bind/index.js", function(exports, require, module){
 /**
@@ -1210,8 +1179,13 @@ function isEmpty (val) {
 });
 require.register("ianstormtaylor-is/index.js", function(exports, require, module){
 
-var isEmpty = require('is-empty')
-  , typeOf = require('type');
+var isEmpty = require('is-empty');
+
+try {
+  var typeOf = require('type');
+} catch (e) {
+  var typeOf = require('component-type');
+}
 
 
 /**
@@ -1427,6 +1401,167 @@ module.exports = function(fn) {
 };
 
 });
+require.register("component-throttle/index.js", function(exports, require, module){
+
+/**
+ * Module exports.
+ */
+
+module.exports = throttle;
+
+/**
+ * Returns a new function that, when invoked, invokes `func` at most one time per
+ * `wait` milliseconds.
+ *
+ * @param {Function} func The `Function` instance to wrap.
+ * @param {Number} wait The minimum number of milliseconds that must elapse in between `func` invokations.
+ * @return {Function} A new function that wraps the `func` function passed in.
+ * @api public
+ */
+
+function throttle (func, wait) {
+  var rtn; // return value
+  var last = 0; // last invokation timestamp
+  return function throttled () {
+    var now = new Date().getTime();
+    var delta = now - last;
+    if (delta >= wait) {
+      rtn = func.apply(this, arguments);
+      last = now;
+    }
+    return rtn;
+  };
+}
+
+});
+require.register("component-queue/index.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var Emitter = require('emitter');
+
+/**
+ * Expose `Queue`.
+ */
+
+module.exports = Queue;
+
+/**
+ * Initialize a `Queue` with the given options:
+ *
+ *  - `concurrency` [1]
+ *  - `timeout` [0]
+ *
+ * @param {Object} options
+ * @api public
+ */
+
+function Queue(options) {
+  options = options || {};
+  this.timeout = options.timeout || 0;
+  this.concurrency = options.concurrency || 1;
+  this.pending = 0;
+  this.jobs = [];
+}
+
+/**
+ * Mixin emitter.
+ */
+
+Emitter(Queue.prototype);
+
+/**
+ * Return queue length.
+ *
+ * @return {Number}
+ * @api public
+ */
+
+Queue.prototype.length = function(){
+  return this.pending + this.jobs.length;
+};
+
+/**
+ * Queue `fn` for execution.
+ *
+ * @param {Function} fn
+ * @param {Function} [cb]
+ * @api public
+ */
+
+Queue.prototype.push = function(fn, cb){
+  this.jobs.push([fn, cb]);
+  setTimeout(this.run.bind(this), 0);
+};
+
+/**
+ * Run jobs at the specified concurrency.
+ *
+ * @api private
+ */
+
+Queue.prototype.run = function(){
+  while (this.pending < this.concurrency) {
+    var job = this.jobs.shift();
+    if (!job) break;
+    this.exec(job);
+  }
+};
+
+/**
+ * Execute `job`.
+ *
+ * @param {Array} job
+ * @api private
+ */
+
+Queue.prototype.exec = function(job){
+  var self = this;
+  var ms = this.timeout;
+
+  var fn = job[0];
+  var cb = job[1];
+  if (ms) fn = timeout(fn, ms);
+
+  this.pending++;
+  fn(function(err, res){
+    cb && cb(err, res);
+    self.pending--;
+    self.run();
+  });
+};
+
+/**
+ * Decorate `fn` with a timeout of `ms`.
+ *
+ * @param {Function} fn
+ * @param {Function} ms
+ * @return {Function}
+ * @api private
+ */
+
+function timeout(fn, ms) {
+  return function(cb){
+    var done;
+
+    var id = setTimeout(function(){
+      done = true;
+      var err = new Error('Timeout of ' + ms + 'ms exceeded');
+      err.timeout = timeout;
+      cb(err);
+    }, ms);
+
+    fn(function(err, res){
+      if (done) return;
+      clearTimeout(id);
+      cb(err, res);
+    });
+  }
+}
+
+});
 require.register("ianstormtaylor-to-no-case/index.js", function(exports, require, module){
 
 /**
@@ -1441,7 +1576,6 @@ module.exports = toNoCase;
  */
 
 var hasSpace = /\s/;
-var hasCamel = /[a-z][A-Z]/;
 var hasSeparator = /[\W_]/;
 
 
@@ -1455,10 +1589,8 @@ var hasSeparator = /[\W_]/;
 
 function toNoCase (string) {
   if (hasSpace.test(string)) return string.toLowerCase();
-
-  if (hasSeparator.test(string)) string = unseparate(string);
-  if (hasCamel.test(string)) string = uncamelize(string);
-  return string.toLowerCase();
+  if (hasSeparator.test(string)) return unseparate(string).toLowerCase();
+  return uncamelize(string).toLowerCase();
 }
 
 
@@ -3537,9 +3669,6 @@ GA.on('construct', function (integration) {
 
 GA.prototype.initialize = function () {
   var opts = this.options;
-  var gMetrics = metrics(group.traits(), opts);
-  var uMetrics = metrics(user.traits(), opts);
-  var custom;
 
   // setup the tracker globals
   window.GoogleAnalyticsObject = 'ga';
@@ -3563,15 +3692,15 @@ GA.prototype.initialize = function () {
   // send global id
   if (opts.sendUserId && user.id()) {
     window.ga('set', '&uid', user.id());
-  }  
+  }
 
   // anonymize after initializing, otherwise a warning is shown
   // in google analytics debugger
   if (opts.anonymizeIp) window.ga('set', 'anonymizeIp', true);
 
   // custom dimensions & metrics
-  if (length(gMetrics)) window.ga('set', gMetrics);
-  if (length(uMetrics)) window.ga('set', uMetrics);
+  var custom = metrics(user.traits(), opts);
+  if (length(custom)) window.ga('set', custom);
 
   this.load();
 };
@@ -3616,14 +3745,12 @@ GA.prototype.page = function (page) {
 
   this._category = category; // store for later
 
-  // add metrics and dimensions
-  var hit = metrics(page.properties(), this.options);
-  hit.page = path(props, this.options);
-  hit.title = name || props.title;
-  hit.location = props.url;
-
   // send
-  window.ga('send', 'pageview', hit);
+  window.ga('send', 'pageview', {
+    page: path(props, this.options),
+    title: name || props.title,
+    location: props.url
+  });
 
   // categorized pages
   if (category && this.options.trackCategorizedPages) {
@@ -3652,18 +3779,13 @@ GA.prototype.track = function (track, options) {
   var opts = options || track.options(this.name);
   var props = track.properties();
 
-  // metrics & dimensions
-  var event = metrics(props, this.options);
-
-  // event
-  event.eventAction = track.event();
-  event.eventCategory = props.category || this._category || 'All';
-  event.eventLabel = props.label;
-  event.eventValue = formatValue(props.value || track.revenue());
-  event.nonInteraction = props.noninteraction || opts.noninteraction;
-
-  // send
-  window.ga('send', 'event', event);
+  window.ga('send', 'event', {
+    eventAction: track.event(),
+    eventCategory: props.category || this._category || 'All',
+    eventLabel: props.label,
+    eventValue: formatValue(props.value || track.revenue()),
+    nonInteraction: props.noninteraction || opts.noninteraction
+  });
 };
 
 /**
@@ -3910,15 +4032,15 @@ function formatValue (value) {
 
 /**
  * Map google's custom dimensions & metrics with `obj`.
- * 
+ *
  * Example:
- * 
- *      metrics({ revenue: 1.9 }, { { metrics : { metric8: 'revenue' } });
+ *
+ *      metrics({ revenue: 1.9 }, { { metrics : { revenue: 'metric8' } });
  *      // => { metric8: 1.9 }
- * 
+ *
  *      metrics({ revenue: 1.9 }, {});
  *      // => {}
- * 
+ *
  * @param {Object} obj
  * @param {Object} data
  * @return {Object|null}
@@ -3932,22 +4054,223 @@ function metrics(obj, data){
   var ret = {};
 
   for (var i = 0; i < names.length; ++i) {
-    var name = metrics[names[i]] || dimensions[names[i]];
+    var name = names[i];
+    var key = metrics[name] || dimensions[name];
     var value = dot(obj, name);
     if (null == value) continue;
-    ret[names[i]] = value;
+    ret[key] = value;
   }
 
   return ret;
 }
 
 });
+require.register("dpolivy-analytics.js-integrations/lib/google-analytics-cordova.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var each = require('each');
+var integration = require('integration');
+var Track = require('facade').Track;
+var keys = require('object').keys;
+var dot = require('obj-case');
+var user;
+
+/**
+ * Expose plugin.
+ */
+
+module.exports = exports = function (analytics) {
+  analytics.addIntegration(GAC);
+  user = analytics.user();
+};
+
+
+/**
+ * Expose `GAC` integration.
+ *
+ * https://github.com/danwilson/google-analytics-plugin
+ */
+
+var GAC = exports.Integration = integration('Google Analytics Cordova')
+  .readyOnInitialize()
+  .option('debug', false)
+  .option('dimensions', {})
+  .option('sendUserId', false)
+  .option('trackingId', '');
+
+
+/**
+ * Initialize.
+ *
+ */
+
+GAC.prototype.initialize = function () {
+  var opts = this.options;
+
+  if (opts.debug) ga.debugMode();
+
+  ga.startTrackerWithId(opts.trackingId);
+
+  if (opts.sendUserId && user.id()) ga.setUserId(user.id());
+
+  // custom dimensions
+  setDimensions(user.traits(), opts);
+};
+
+
+/**
+ * Loaded?
+ *
+ * @return {Boolean}
+ */
+
+GAC.prototype.loaded = function () {
+  return !! window.ga;
+};
+
+
+/**
+ * Page.
+ *
+ * @param {Page} page
+ */
+
+GAC.prototype.page = function (page) {
+  var props = page.properties();
+
+  this._category = page.category(); // store for later
+
+  ga.trackView(props.url);
+};
+
+/**
+ * Identify.
+ *
+ *
+ * @param {String} id (optional)
+ */
+
+GAC.prototype.identify = function(identify){
+  var id = identify.userId();
+  if (this.options.sendUserId && id) ga.setUserId(id);
+};
+
+/**
+ * Track.
+ *
+ * https://developers.google.com/analytics/devguides/collection/analyticsjs/events
+ * https://developers.google.com/analytics/devguides/collection/analyticsjs/field-reference
+ *
+ * @param {Track} event
+ */
+
+GAC.prototype.track = function (track, options) {
+  var opts = options || track.options(this.name);
+  var props = track.properties();
+  var category = props.category || this._category || 'All';
+
+  ga.trackEvent(category, track.event(), props.label, formatValue(props.value || track.revenue()));
+};
+
+/**
+ * Completed order.
+ *
+ * https://developers.google.com/analytics/devguides/collection/analyticsjs/ecommerce
+ *
+ * @param {Track} track
+ * @api private
+ */
+
+GAC.prototype.completedOrder = function(track){
+  var total = track.total() || track.revenue() || 0;
+  var orderId = track.orderId();
+  var products = track.products();
+  var props = track.properties();
+
+  // orderId is required.
+  if (!orderId) return;
+
+  // add transaction
+  ga.addTransaction(orderId, props.affiliation, total, track.tax(), track.shipping());
+  
+  // add products
+  each(products, function(product){
+    var track = new Track({ properties: product });
+
+    ga.addTransactionItem(orderId, track.name(), track.sku(), track.category(), track.price(), track.quantity());
+  });
+};
+
+
+/**
+ * Return the path based on `properties` and `options`.
+ *
+ * @param {Object} properties
+ * @param {Object} options
+ */
+
+function path (properties, options) {
+  if (!properties) return;
+  var str = properties.path;
+  if (options.includeSearch && properties.search) str += properties.search;
+  return str;
+}
+
+
+/**
+ * Format the value property to Google's liking.
+ *
+ * @param {Number} value
+ * @return {Number}
+ */
+
+function formatValue (value) {
+  if (!value || value < 0) return 0;
+  return Math.round(value);
+}
+
+/**
+ * Map google's custom dimensions with `obj`.
+ *
+ * Example:
+ *
+ *      setDimensions({ revenue: 1.9 }, { { dimensions : { revenue: 'dimension8' } });
+ *      // => { dimension8: 1.9 }
+ *
+ *      setDimensions({ revenue: 1.9 }, {});
+ *      // => {}
+ *
+ * @param {Object} obj
+ * @param {Object} data
+ * @api private
+ */
+
+function setDimensions(obj, data){
+  var dimensions = data.dimensions;
+  var names = keys(dimensions);
+
+  for (var i = 0; i < names.length; ++i) {
+    var name = names[i];
+    var key = dimensions[name];
+    var value = dot(obj, name);
+    if (null == value) continue;
+    ga.addCustomDimension(key, value);
+  }
+}
+
+});
 require.register("dpolivy-analytics.js-integrations/lib/quantcast.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
 
 var integration = require('integration');
 var load = require('load-script');
 var push = require('global-queue')('_qevents', { wrap: false });
-
 
 /**
  * User reference.
@@ -3955,16 +4278,14 @@ var push = require('global-queue')('_qevents', { wrap: false });
 
 var user;
 
-
 /**
  * Expose plugin.
  */
 
-module.exports = exports = function (analytics) {
+module.exports = exports = function(analytics){
   analytics.addIntegration(Quantcast);
   user = analytics.user(); // store for later
 };
-
 
 /**
  * Expose `Quantcast` integration.
@@ -3977,8 +4298,9 @@ var Quantcast = exports.Integration = integration('Quantcast')
   .global('__qc')
   .option('pCode', null)
   .option('advertise', false)
-  .option('includeDefaultLabels', true)
-  .option('labels', '');
+  .option('pageLabels', true)
+  .option('eventLabels', true)
+  .option('globalLabels', []);
 
 
 /**
@@ -3990,7 +4312,7 @@ var Quantcast = exports.Integration = integration('Quantcast')
  * @param {Page} page
  */
 
-Quantcast.prototype.initialize = function (page) {
+Quantcast.prototype.initialize = function(page){
   window._qevents = window._qevents || [];
 
   var opts = this.options;
@@ -4000,14 +4322,13 @@ Quantcast.prototype.initialize = function (page) {
   if (page) {
     settings.labels = this.labels('page', page.category(), page.name());
   }
-  else if (opts.labels) {
-    settings.labels = opts.labels;
+  else if (opts.globalLabels.length) {
+    settings.labels = opts.globalLabels.join(',');
   }
 
   push(settings);
   this.load();
 };
-
 
 /**
  * Loaded?
@@ -4015,24 +4336,22 @@ Quantcast.prototype.initialize = function (page) {
  * @return {Boolean}
  */
 
-Quantcast.prototype.loaded = function () {
+Quantcast.prototype.loaded = function(){
   return !! window.__qc;
 };
-
 
 /**
  * Load.
  *
- * @param {Function} callback
+ * @param {Function} fn
  */
 
-Quantcast.prototype.load = function (callback) {
+Quantcast.prototype.load = function(fn){
   load({
     http: 'http://edge.quantserve.com/quant.js',
     https: 'https://secure.quantserve.com/quant.js'
-  }, callback);
+  }, fn);
 };
-
 
 /**
  * Page.
@@ -4042,7 +4361,7 @@ Quantcast.prototype.load = function (callback) {
  * @param {Page} page
  */
 
-Quantcast.prototype.page = function (page) {
+Quantcast.prototype.page = function(page){
   var category = page.category();
   var name = page.name();
   var settings = {
@@ -4054,7 +4373,6 @@ Quantcast.prototype.page = function (page) {
   push(settings);
 };
 
-
 /**
  * Identify.
  *
@@ -4063,12 +4381,11 @@ Quantcast.prototype.page = function (page) {
  * @param {String} id (optional)
  */
 
-Quantcast.prototype.identify = function (identify) {
+Quantcast.prototype.identify = function(identify){
   // edit the initial quantcast settings
   var id = identify.userId();
   if (id && !!window._qevents[0]) window._qevents[0].uid = id;
 };
-
 
 /**
  * Track.
@@ -4078,7 +4395,7 @@ Quantcast.prototype.identify = function (identify) {
  * @param {Track} track
  */
 
-Quantcast.prototype.track = function (track) {
+Quantcast.prototype.track = function(track){
   var name = track.event();
   var revenue = track.revenue();
   var settings = {
@@ -4090,7 +4407,6 @@ Quantcast.prototype.track = function (track) {
   if (user.id()) settings.uid = user.id();
   push(settings);
 };
-
 
 /**
  * Completed Order.
@@ -4105,7 +4421,7 @@ Quantcast.prototype.completedOrder = function(track){
   var labels = this.labels('event', name);
   var category = track.category();
 
-  if (this.options.advertise && this.options.includeDefaultLabels && category) {
+  if (this.options.advertise && this.options.eventLabels && category) {
     labels += ',' + this.labels('pcat', category);
   }
 
@@ -4132,8 +4448,8 @@ Quantcast.prototype.completedOrder = function(track){
  *    labels('event', 'my event');
  *    // => "_fp.event.my event"
  *
- *    options.includeDefaultLabels = false;
- *    options.labels = 'GlobalLabel';
+ *    options.eventLabels = false;
+ *    options.globalLabels = 'GlobalLabel';
  *    // => "GlobalLabel"
  * 
  * @param {String} type
@@ -4149,10 +4465,11 @@ Quantcast.prototype.labels = function(type){
   var ret = [];
 
   // Add global labels to the tag
-  if (this.options.labels && 'pcat' !== type) labels.push(this.options.labels);
+  if (this.options.globalLabels.length && 'pcat' !== type) labels = this.options.globalLabels.concat();
 
   // Include the default label if specified
-  if (this.options.includeDefaultLabels) {  
+  if (this.options.pageLabels && 'page' === type ||
+      this.options.eventLabels && ['event','pcat'].indexOf(type) !== -1) {  
     if (advertise && 'page' == type) type = 'event';
     if (advertise) type = '_fp.' + type;
 
@@ -4166,6 +4483,103 @@ Quantcast.prototype.labels = function(type){
     if (ret) labels.push([type, ret].join('.'));
   }
   return labels.join(',');
+};
+
+});
+require.register("dpolivy-analytics.js-integrations/lib/quantcast-cordova.js", function(exports, require, module){
+
+/**
+ * Module dependencies.
+ */
+
+var integration = require('integration');
+
+/**
+ * User reference.
+ */
+
+var user;
+
+/**
+ * Expose plugin.
+ */
+
+module.exports = exports = function(analytics){
+  analytics.addIntegration(QuantcastCordova);
+  user = analytics.user(); // store for later
+};
+
+/**
+ * Expose `Quantcast` integration.
+ *
+ * https://github.com/quantcast/phonegap-measurement
+ */
+
+var QuantcastCordova = exports.Integration = integration('Quantcast Cordova')
+  .assumesPageview()
+  .readyOnInitialize()
+  .option('key', null)
+  .option('debug', false)
+  .option('enableGeo', false)
+  .option('globalLabels', []);
+
+
+/**
+ * Initialize. Setup the measurement session.
+ *
+ * https://www.quantcast.com/help/cross-platform-audience-measurement-guide/
+ *
+ * @param {Page} page
+ */
+
+QuantcastCordova.prototype.initialize = function(page){
+  var settings = { 
+    key: this.options.key
+  };
+  
+  if (user.id()) settings.uid = user.id();
+
+  if (this.options.globalLabels) settings.labels = this.options.globalLabels;
+
+  QuantcastMeasurement.setUpQuantcastMeasurement(settings.key, settings.uid, settings.labels);
+
+  if (this.options.debug) QuantcastMeasurement.setDebugLogging(this.options.debug);
+  if (this.options.enableGeo) QuantcastMeasurement.setGeoLocation(this.options.enableGeo);
+};
+
+/**
+ * Loaded?
+ *
+ * @return {Boolean}
+ */
+
+QuantcastCordova.prototype.loaded = function(){
+  return !! window.QuantcastMeasurement;
+};
+
+/**
+ * Identify.
+ *
+ * https://www.quantcast.com/help/cross-platform-audience-measurement-guide/
+ *
+ * @param {String} id (optional)
+ */
+
+QuantcastCordova.prototype.identify = function(identify){
+  var id = identify.userId();
+  if (id) QuantcastMeasurement.recordUserIdentifier(null, id, this.options.globalLabels);
+};
+
+/**
+ * Track.
+ *
+ * Logs an event that occurs in the app.
+ *
+ * @param {Track} track
+ */
+
+QuantcastCordova.prototype.track = function(track){
+  QuantcastMeasurement.logEvent(track.event(), this.options.globalLabels);
 };
 
 });
@@ -7739,13 +8153,19 @@ module.exports.User = User;
 
 
 
+
+
 require.register("dpolivy-analytics.js-integrations/lib/slugs.json", function(exports, require, module){
 module.exports = [
   "google-analytics",
-  "quantcast"
+  "google-analytics-cordova",
+  "quantcast",
+  "quantcast-cordova"
 ]
 
 });
+
+
 
 
 
@@ -7875,9 +8295,13 @@ require.alias("segmentio-after/index.js", "after/index.js");
 
 require.alias("dpolivy-analytics.js-integrations/index.js", "analytics/deps/integrations/index.js");
 require.alias("dpolivy-analytics.js-integrations/lib/google-analytics.js", "analytics/deps/integrations/lib/google-analytics.js");
+require.alias("dpolivy-analytics.js-integrations/lib/google-analytics-cordova.js", "analytics/deps/integrations/lib/google-analytics-cordova.js");
 require.alias("dpolivy-analytics.js-integrations/lib/quantcast.js", "analytics/deps/integrations/lib/quantcast.js");
+require.alias("dpolivy-analytics.js-integrations/lib/quantcast-cordova.js", "analytics/deps/integrations/lib/quantcast-cordova.js");
 require.alias("dpolivy-analytics.js-integrations/index.js", "integrations/index.js");
 require.alias("avetisk-defaults/index.js", "dpolivy-analytics.js-integrations/deps/defaults/index.js");
+
+require.alias("component-bind/index.js", "dpolivy-analytics.js-integrations/deps/bind/index.js");
 
 require.alias("component-clone/index.js", "dpolivy-analytics.js-integrations/deps/clone/index.js");
 require.alias("component-type/index.js", "component-clone/deps/type/index.js");
@@ -7887,12 +8311,22 @@ require.alias("component-domify/index.js", "dpolivy-analytics.js-integrations/de
 require.alias("component-each/index.js", "dpolivy-analytics.js-integrations/deps/each/index.js");
 require.alias("component-type/index.js", "component-each/deps/type/index.js");
 
+require.alias("component-indexof/index.js", "dpolivy-analytics.js-integrations/deps/indexof/index.js");
+
 require.alias("component-once/index.js", "dpolivy-analytics.js-integrations/deps/once/index.js");
+
+require.alias("component-throttle/index.js", "dpolivy-analytics.js-integrations/deps/throttle/index.js");
 
 require.alias("component-type/index.js", "dpolivy-analytics.js-integrations/deps/type/index.js");
 
 require.alias("component-url/index.js", "dpolivy-analytics.js-integrations/deps/url/index.js");
 
+require.alias("component-queue/index.js", "dpolivy-analytics.js-integrations/deps/queue/index.js");
+require.alias("component-queue/index.js", "dpolivy-analytics.js-integrations/deps/queue/index.js");
+require.alias("component-emitter/index.js", "component-queue/deps/emitter/index.js");
+require.alias("component-indexof/index.js", "component-emitter/deps/indexof/index.js");
+
+require.alias("component-queue/index.js", "component-queue/index.js");
 require.alias("ianstormtaylor-callback/index.js", "dpolivy-analytics.js-integrations/deps/callback/index.js");
 require.alias("timoxley-next-tick/index.js", "ianstormtaylor-callback/deps/next-tick/index.js");
 
@@ -8127,8 +8561,6 @@ require.alias("segmentio-replace-document-write/index.js", "dpolivy-analytics.js
 require.alias("component-domify/index.js", "segmentio-replace-document-write/deps/domify/index.js");
 
 require.alias("segmentio-replace-document-write/index.js", "segmentio-replace-document-write/index.js");
-require.alias("component-indexof/index.js", "dpolivy-analytics.js-integrations/deps/indexof/index.js");
-
 require.alias("component-object/index.js", "dpolivy-analytics.js-integrations/deps/object/index.js");
 
 require.alias("segmentio-obj-case/index.js", "dpolivy-analytics.js-integrations/deps/obj-case/index.js");

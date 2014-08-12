@@ -201,20 +201,32 @@ require.relative = function(parent) {
   return localRequire;
 };
 require.register("avetisk-defaults/index.js", function(exports, require, module){
-/**
- * Expose `defaults`.
- */
-module.exports = defaults;
+'use strict';
 
-function defaults (dest, defaults) {
-  for (var prop in defaults) {
-    if (! (prop in dest)) {
-      dest[prop] = defaults[prop];
+/**
+ * Merge default values.
+ *
+ * @param {Object} dest
+ * @param {Object} defaults
+ * @return {Object}
+ * @api public
+ */
+var defaults = function (dest, src, recursive) {
+  for (var prop in src) {
+    if (recursive && dest[prop] instanceof Object && src[prop] instanceof Object) {
+      dest[prop] = defaults(dest[prop], src[prop], true);
+    } else if (! (prop in dest)) {
+      dest[prop] = src[prop];
     }
   }
 
   return dest;
 };
+
+/**
+ * Expose `defaults`.
+ */
+module.exports = defaults;
 
 });
 require.register("component-type/index.js", function(exports, require, module){
@@ -1179,13 +1191,8 @@ function isEmpty (val) {
 });
 require.register("ianstormtaylor-is/index.js", function(exports, require, module){
 
-var isEmpty = require('is-empty');
-
-try {
-  var typeOf = require('type');
-} catch (e) {
-  var typeOf = require('component-type');
-}
+var isEmpty = require('is-empty')
+  , typeOf = require('type');
 
 
 /**
@@ -1576,6 +1583,7 @@ module.exports = toNoCase;
  */
 
 var hasSpace = /\s/;
+var hasCamel = /[a-z][A-Z]/;
 var hasSeparator = /[\W_]/;
 
 
@@ -1589,8 +1597,10 @@ var hasSeparator = /[\W_]/;
 
 function toNoCase (string) {
   if (hasSpace.test(string)) return string.toLowerCase();
-  if (hasSeparator.test(string)) return unseparate(string).toLowerCase();
-  return uncamelize(string).toLowerCase();
+
+  if (hasSeparator.test(string)) string = unseparate(string);
+  if (hasCamel.test(string)) string = uncamelize(string);
+  return string.toLowerCase();
 }
 
 
@@ -4095,7 +4105,7 @@ module.exports = exports = function (analytics) {
  */
 
 var GAC = exports.Integration = integration('Google Analytics Cordova')
-  .readyOnInitialize()
+  .readyOnLoad()
   .option('debug', false)
   .option('dimensions', {})
   .option('sendUserId', false)
@@ -4112,12 +4122,10 @@ GAC.prototype.initialize = function () {
 
   if (opts.debug) ga.debugMode();
 
-  ga.startTrackerWithId(opts.trackingId);
-
-  if (opts.sendUserId && user.id()) ga.setUserId(user.id());
-
   // custom dimensions
   setDimensions(user.traits(), opts);
+
+  this.load();
 };
 
 
@@ -4128,7 +4136,31 @@ GAC.prototype.initialize = function () {
  */
 
 GAC.prototype.loaded = function () {
-  return !! window.ga;
+  return !! this._loaded;
+};
+
+
+/**
+ * Start the tracker and wait for the async callback to signify it's ready.
+ *
+ * @param {Function} callback
+ */
+
+GAC.prototype.load = function (callback) {
+  var that = this,
+      opts = this.options;
+
+  ga.startTrackerWithId(
+    opts.trackingId,
+    function() {
+      that._loaded = true;
+
+      // Set the user id
+      if (opts.sendUserId && user.id()) ga.setUserId(user.id());
+
+      callback();
+    },
+    callback /* fail */);
 };
 
 
